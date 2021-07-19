@@ -1,9 +1,10 @@
-use std::io;
+#[macro_use]
+extern crate lazy_static;
 
+use std::io;
 use std::sync::{Arc, Condvar, Mutex};
 
 mod rmxfs;
-
 use rmxfs::RMXFS;
 
 #[derive(Debug)]

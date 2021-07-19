@@ -57,35 +57,43 @@ struct JsonFileEntry {
     visibleName: String,
 }
 
-#[derive(Debug, Copy, Clone, PartialEq)]
+#[derive(Eq, Hash, Debug, Copy, Clone, PartialEq)]
 enum EntryType {
     PDF,
+    EPUB,
+    RMLINES,
     NONE,
 }
 
+lazy_static! {
+    static ref ENTRYMAP: bimap::BiMap<EntryType, &'static str> = {
+        bimap::BiMap::from_iter(vec![
+            (EntryType::PDF,  "pdf"),
+            (EntryType::EPUB, "epub"),
+            (EntryType::RMLINES, "rm"),
+        ])};
+}
+
 fn entry_type_ext(e: &EntryType) -> &str {
-    match e {
-        EntryType::PDF => "pdf",
-        EntryType::NONE => "",
-    }
+    ENTRYMAP.get_by_left(e).unwrap_or(&"")
 }
 
 fn determine_entry_type(path: &Path) -> (EntryType, u64) {
     let mut p = PathBuf::from(path);
-    p.set_extension("pdf");
-    if p.exists() {
-        let size = fs::File::open(p).unwrap().metadata().unwrap().len();
-        (EntryType::PDF, size)
-    } else {
-        (EntryType::NONE, 0)
+    for (tp, ext) in &*ENTRYMAP {
+        p.set_extension(ext);
+        if p.exists() {
+            let size = fs::File::open(p).unwrap().metadata().unwrap().len();
+            return (*tp, size);
+        }
     }
+    return (EntryType::NONE, 0);
 }
 
 #[derive(Debug)]
 struct DirEntry {
     root_path: PathBuf,
     prefix: OsString,
-    //file_ext: OsString,
     entry_type: EntryType,
     name: OsString,
     parent: OsString,
