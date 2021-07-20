@@ -1,3 +1,4 @@
+deps/
 target/
 test-data/target/*
 Cargo.lock
