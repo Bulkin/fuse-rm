@@ -65,22 +65,19 @@ enum EntryType {
     NONE,
 }
 
-lazy_static! {
-    static ref ENTRYMAP: bimap::BiMap<EntryType, &'static str> = {
-        bimap::BiMap::from_iter(vec![
-            (EntryType::PDF,  "pdf"),
-            (EntryType::EPUB, "epub"),
-            (EntryType::RMLINES, "rm"),
-        ])};
-}
+const ENTRYMAP: &'static [(EntryType, &'static str)] = &[
+    (EntryType::EPUB, "epub"),
+    (EntryType::PDF,  "pdf"),
+    (EntryType::RMLINES, "rm"),
+];
 
 fn entry_type_ext(e: &EntryType) -> &str {
-    ENTRYMAP.get_by_left(e).unwrap_or(&"")
+    ENTRYMAP.iter().find(|x| x.0 == *e).unwrap_or(&(EntryType::NONE, "")).1
 }
 
 fn determine_entry_type(path: &Path) -> (EntryType, u64) {
     let mut p = PathBuf::from(path);
-    for (tp, ext) in &*ENTRYMAP {
+    for (tp, ext) in ENTRYMAP {
         p.set_extension(ext);
         if p.exists() {
             let size = fs::File::open(p).unwrap().metadata().unwrap().len();
@@ -221,7 +218,7 @@ impl RMXFS {
         match list_dir_metadata(&self.source_dir) {
             Ok(files) => files.into_iter().find(pred),
             Err(e) => {
-                println!("Find file err: {}", e);
+                debug!("Find file err: {}", e);
                 None
             }
         }
@@ -236,27 +233,27 @@ impl Filesystem for RMXFS {
         name: &OsStr,
         reply: ReplyEntry,
     ) {
+        debug!("lookup: {}", name.to_str().unwrap());
         match self.find_file(&|e: &DirEntry| name == e.file_name()) {
             Some(entry) => {
                 &entry;
                 reply.entry(&TTL, &entry.attr, 0)
             }
             None => {
-                println!("lookup: not found {}", name.to_str().unwrap());
+                debug!("lookup: not found {}", name.to_str().unwrap());
                 reply.error(ENOENT)
             }
         }
     }
 
     fn getattr(&mut self, _req: &Request, ino: u64, reply: ReplyAttr) {
-        dbg!("getattr", ino);
         if ino == 1 {
             reply.attr(&TTL, &HELLO_DIR_ATTR)
         } else {
             match self.find_file(&|e: &DirEntry| ino == e.attr.ino) {
                 Some(entry) => reply.attr(&TTL, &entry.attr),
                 None => {
-                    println!("getattr not found {}", ino);
+                    debug!("getattr not found {}", ino);
                     reply.error(ENOENT)
                 }
             }
@@ -270,7 +267,7 @@ impl Filesystem for RMXFS {
         _flags: i32,
         reply: ReplyOpen,
     ) {
-        println!("open: {}", ino);
+        debug!("open: {}", ino);
         if let Some((counter, file)) = self.file_map.remove(&ino) {
             self.file_map.insert(ino, (counter + 1, file));
             reply.opened(ino, 0);
@@ -280,17 +277,16 @@ impl Filesystem for RMXFS {
                     let mut path = PathBuf::from(&self.source_dir);
                     path.push(entry.prefix);
                     path.set_extension(entry_type_ext(&entry.entry_type));
-                    dbg!(&path); // TODO: cache open files
                     if let Ok(file) = fs::File::open(&path) {
                         self.file_map.insert(ino, (1, file));
                         reply.opened(ino, 0);
                     } else {
-                        println!("open failed: {}", ino);
+                        debug!("open failed: {}", ino);
                         reply.error(libc::ENODATA);
                     }
                 }
                 None => {
-                    println!("open: not found {}", ino);
+                    debug!("open: not found {}", ino);
                     reply.error(ENOENT);
                 }
             }
@@ -309,14 +305,14 @@ impl Filesystem for RMXFS {
     ) {
         match self.file_map.remove(&fh) {
             Some((counter, file)) => {
-                println!("release: {} ref {}", fh, counter);
+                debug!("release: {} ref {}", fh, counter);
                 if counter > 1 {
                     self.file_map.insert(fh, (counter - 1, file));
                 }
                 reply.ok();
             }
             None => {
-                println!("releasedir failed on: {}", fh);
+                debug!("releasedir failed on: {}", fh);
                 reply.error(ENOENT);
             }
         }
@@ -343,7 +339,7 @@ impl Filesystem for RMXFS {
             file.read_exact_at(&mut buffer, offset as u64).unwrap();
             reply.data(&buffer);
         } else {
-            println!("read: not opened {}", fh);
+            debug!("read: not opened {}", fh);
             reply.error(ENOENT)
         }
     }
@@ -355,13 +351,14 @@ impl Filesystem for RMXFS {
         _flags: i32,
         reply: ReplyOpen,
     ) {
+        debug!("opendir: {}", ino);
         let parent = if ino == 1 {
             DirEntry::make_root(&self.source_dir)
         } else {
             match self.find_file(&|e| ino == e.attr.ino) {
                 Some(entry) => entry,
                 None => {
-                    println!("opendir: not found: {}", ino);
+                    debug!("opendir: not found: {}", ino);
                     reply.error(ENOENT);
                     return;
                 }
@@ -404,14 +401,14 @@ impl Filesystem for RMXFS {
     ) {
         match self.dir_map.remove(&fh) {
             Some((counter, entries)) => {
-                println!("releasedir: {} ref {}", fh, counter);
+                debug!("releasedir: {} ref {}", fh, counter);
                 if counter > 1 {
                     self.dir_map.insert(fh, (counter - 1, entries));
                 }
                 reply.ok();
             }
             None => {
-                println!("releasedir failed on: {}", fh);
+                debug!("releasedir failed on: {}", fh);
                 reply.error(ENOENT);
             }
         }
@@ -425,8 +422,8 @@ impl Filesystem for RMXFS {
         offset: i64,
         mut reply: ReplyDirectory,
     ) {
+        debug!("readdir: {}", fh);
         if let Some((_, entries)) = self.dir_map.get(&fh) {
-            dbg!(offset);
             for (i, entry) in
                 entries.into_iter().enumerate().skip(offset as usize)
             {
@@ -445,7 +442,7 @@ impl Filesystem for RMXFS {
             }
             reply.ok();
         } else {
-            println!("readdir: no handle {}", fh);
+            debug!("readdir: no handle {}", fh);
             reply.error(ENOENT);
         }
     }

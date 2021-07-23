@@ -7,12 +7,13 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-bimap = "0.6"
-lazy_static = "1.4"
+log = "0.4"
+env_logger = "0.8"
 libc = "*"
-fuser = "*"
+# disable default-features to build without libfuse dep
+fuser = { version = "*", default-features = false }
 argwerk = "*"
-ctrlc = "*"
+ctrlc = { version = "*", features = ["termination"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 # infer = { version = "0.5", default-features = false } For use when adding files

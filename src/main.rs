@@ -1,5 +1,5 @@
 #[macro_use]
-extern crate lazy_static;
+extern crate log;
 
 use std::io;
 use std::sync::{Arc, Condvar, Mutex};
@@ -48,6 +48,7 @@ impl std::convert::From<io::Error> for ProgError {
 }
 
 fn main() -> Result<(), ProgError> {
+    env_logger::init();
     let args = argwerk::args! {
         /// A FUSE fs for accessing xochitl data.
         "fuse-rm [opts] source target" {

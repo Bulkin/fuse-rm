@@ -1,0 +1,11 @@
+[Unit]
+Description=FUSE FS for accessing xochitl library
+After=opt.mount
+
+[Service]
+ExecStart=/opt/bin/fuse-rm /home/root/rmlibrary /home/root/library
+Restart=on-failure
+Environment="" # "RUST_LOG=debug"
+
+[Install]
+WantedBy=multi-user.target
