@@ -7,6 +7,8 @@ use std::sync::{Arc, Condvar, Mutex};
 mod rmxfs;
 use rmxfs::RMXFS;
 
+mod jsonmetadata;
+
 #[derive(Debug)]
 struct ProgError(String);
 

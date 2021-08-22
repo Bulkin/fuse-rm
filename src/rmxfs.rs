@@ -2,8 +2,6 @@ use fuser::{
     FileAttr, FileType, Filesystem, ReplyAttr, ReplyData, ReplyDirectory,
     ReplyEmpty, ReplyEntry, ReplyOpen, Request,
 };
-use serde::{Deserialize, Serialize};
-//use serde_json as json;
 use libc::ENOENT;
 use std::collections::HashMap;
 use std::ffi::{OsStr, OsString};
@@ -13,6 +11,8 @@ use std::iter::FromIterator;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use crate::jsonmetadata::JsonMetadata;
 
 const TTL: Duration = Duration::from_secs(1); // 1 second
 
@@ -50,13 +50,6 @@ impl RMXFS {
     }
 }
 
-#[allow(non_snake_case)]
-#[derive(Serialize, Deserialize)]
-struct JsonFileEntry {
-    parent: String,
-    visibleName: String,
-}
-
 #[derive(Eq, Hash, Debug, Copy, Clone, PartialEq)]
 enum EntryType {
     PDF,
@@ -67,12 +60,16 @@ enum EntryType {
 
 const ENTRYMAP: &'static [(EntryType, &'static str)] = &[
     (EntryType::EPUB, "epub"),
-    (EntryType::PDF,  "pdf"),
+    (EntryType::PDF, "pdf"),
     (EntryType::RMLINES, "rm"),
 ];
 
 fn entry_type_ext(e: &EntryType) -> &str {
-    ENTRYMAP.iter().find(|x| x.0 == *e).unwrap_or(&(EntryType::NONE, "")).1
+    ENTRYMAP
+        .iter()
+        .find(|x| x.0 == *e)
+        .unwrap_or(&(EntryType::NONE, ""))
+        .1
 }
 
 fn determine_entry_type(path: &Path) -> (EntryType, u64) {
@@ -95,13 +92,15 @@ struct DirEntry {
     name: OsString,
     parent: OsString,
     attr: FileAttr,
+
+    json_metadata: JsonMetadata,
 }
 
 impl DirEntry {
     fn new(
         file_path: &Path,
         attr: &FileAttr,
-        json_data: &JsonFileEntry,
+        json_data: &JsonMetadata,
     ) -> DirEntry {
         let (tp, sz) = determine_entry_type(file_path);
         DirEntry {
@@ -110,7 +109,7 @@ impl DirEntry {
             ),
             prefix: file_path.file_stem().unwrap().to_os_string(),
             entry_type: tp,
-            name: OsString::from(&json_data.visibleName),
+            name: OsString::from(&json_data.visible_name),
             parent: OsString::from(&json_data.parent),
             attr: FileAttr {
                 size: sz,
@@ -122,6 +121,7 @@ impl DirEntry {
                 perm: HELLO_DIR_ATTR.perm,
                 ..*attr
             },
+            json_metadata: json_data.clone(),
         }
     }
 
@@ -131,9 +131,11 @@ impl DirEntry {
             root_path: PathBuf::from(dir_path),
             prefix: OsString::from(""),
             entry_type: EntryType::NONE,
-            name: OsString::from("."),
+            name: OsString::from(""),
             parent: OsString::from(""),
             attr: HELLO_DIR_ATTR,
+
+            json_metadata: JsonMetadata::new("", ""),
         }
     }
 
@@ -149,6 +151,13 @@ impl DirEntry {
         path.into_os_string()
     }
 
+    fn metadata_file_name(&self) -> PathBuf {
+        let mut path = PathBuf::from(&self.root_path);
+        path.push(&self.prefix);
+        path.set_extension("metadata");
+        path
+    }
+
     fn is_parent(&self, parent: &DirEntry) -> bool {
         (parent.name == "." && self.parent == "")
             || self.parent == parent.prefix
@@ -156,9 +165,26 @@ impl DirEntry {
 
     fn parent_inode(&self) -> io::Result<u64> {
         let mut path = PathBuf::from(&self.root_path);
-        path.push(&self.prefix);
+        path.push(&self.parent);
         path.set_extension("metadata");
         Ok(fs::File::open(path)?.metadata()?.ino())
+    }
+
+    fn rename(&self, newparent: &DirEntry, newname: &OsStr) -> io::Result<DirEntry> {
+        let mut json_data = self.json_metadata.clone();
+        json_data.visible_name = newname.to_string_lossy().to_string();
+        json_data.parent = newparent.prefix.to_string_lossy().to_string();
+        json_data.save_file(self.metadata_file_name())?;
+        let res = DirEntry {
+            name: OsString::from(newname),
+            parent: newparent.prefix.clone(),
+            json_metadata: json_data,
+            root_path: self.root_path.clone(),
+            prefix: self.prefix.clone(),
+            ..*self
+        };
+
+        Ok(res)
     }
 }
 
@@ -206,8 +232,7 @@ fn list_dir_metadata(dir: &PathBuf) -> io::Result<Vec<DirEntry>> {
         }
         let mut path = PathBuf::from(dir);
         path.push(e.file_name());
-        let json_data: JsonFileEntry =
-            serde_json::from_str(&fs::read_to_string(&path)?)?;
+        let json_data = JsonMetadata::from_file(&path)?;
         res.push(DirEntry::new(&path, &conv_attr(&e)?, &json_data));
     }
     Ok(res)
@@ -223,18 +248,27 @@ impl RMXFS {
             }
         }
     }
+
+    fn dir_from_ino(&self, ino: u64) -> Option<DirEntry> {
+        if ino == 1 {
+            Some(DirEntry::make_root(&self.source_dir))
+        } else {
+            self.find_file(&|e: &DirEntry| e.attr.ino == ino)
+        }
+    }
 }
 
 impl Filesystem for RMXFS {
     fn lookup(
         &mut self,
         _req: &Request,
-        _parent: u64,
+        parent: u64,
         name: &OsStr,
         reply: ReplyEntry,
     ) {
         debug!("lookup: {}", name.to_str().unwrap());
-        match self.find_file(&|e: &DirEntry| name == e.file_name()) {
+        match self.find_file(&|e: &DirEntry| name == e.file_name() &&
+                             parent == e.parent_inode().unwrap_or(1)) {
             Some(entry) => {
                 &entry;
                 reply.entry(&TTL, &entry.attr, 0)
@@ -258,6 +292,39 @@ impl Filesystem for RMXFS {
                 }
             }
         }
+    }
+
+    fn rename(
+        &mut self,
+        _req: &Request<'_>,
+        parent: u64,
+        name: &OsStr,
+        newparent: u64,
+        newname: &OsStr,
+        _flags: u32,
+        reply: ReplyEmpty,
+    ) {
+        debug!("rename: {}/{} -> {}/{}",
+               parent, name.to_str().unwrap(),
+               newparent, newname.to_str().unwrap());
+        // need to get the ino of the parent -- easily done by opening e.parent + '.metadata'.
+        if let Some(entry) = self.find_file(
+            &|e: &DirEntry| (e.parent_inode().unwrap_or(1) == parent &&
+                             e.file_name() == name)) {
+
+            if let Some(parent_entry) = self.dir_from_ino(newparent) {
+                if let Err(_) = entry.rename(&parent_entry, newname) {
+                    reply.error(libc::EIO);
+                    return;
+                }
+                reply.ok();
+                return;
+            } else {
+                debug!("rename: newparent not found: {}", newparent);
+            }
+        }
+        debug!("rename: not found {}/{}", parent, name.to_str().unwrap());
+        reply.error(ENOENT);
     }
 
     fn open(
@@ -352,16 +419,12 @@ impl Filesystem for RMXFS {
         reply: ReplyOpen,
     ) {
         debug!("opendir: {}", ino);
-        let parent = if ino == 1 {
-            DirEntry::make_root(&self.source_dir)
-        } else {
-            match self.find_file(&|e| ino == e.attr.ino) {
-                Some(entry) => entry,
-                None => {
-                    debug!("opendir: not found: {}", ino);
-                    reply.error(ENOENT);
-                    return;
-                }
+        let parent = match self.dir_from_ino(ino) {
+            Some(entry) => entry,
+            None => {
+                debug!("opendir: not found: {}", ino);
+                reply.error(ENOENT);
+                return;
             }
         };
 
@@ -417,7 +480,7 @@ impl Filesystem for RMXFS {
     fn readdir(
         &mut self,
         _req: &Request,
-        ino: u64,
+        _ino: u64,
         fh: u64,
         offset: i64,
         mut reply: ReplyDirectory,
