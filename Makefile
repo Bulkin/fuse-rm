@@ -1,7 +1,5 @@
 test:
-	fusermount -u test-data/target
-	cargo run -- test-data/source test-data/target
-	ls test-data/target
+	RUST_BACKTRACE=1 python -m unittest test-data/test.py
 
 arm:
 	cargo build --release --target=armv7-unknown-linux-gnueabihf
