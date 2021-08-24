@@ -16,4 +16,5 @@ argwerk = "*"
 ctrlc = { version = "*", features = ["termination"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+uuid = { version = "0.8", features = ["v4"] }
 # infer = { version = "0.5", default-features = false } For use when adding files

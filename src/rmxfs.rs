@@ -4,7 +4,7 @@ use fuser::{
 };
 use libc::ENOENT;
 use std::collections::HashMap;
-use std::ffi::{OsStr, OsString};
+use std::ffi::{OsStr};
 use std::fs;
 use std::io;
 use std::iter::FromIterator;
@@ -13,26 +13,8 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::jsonmetadata::JsonMetadata;
-
-const TTL: Duration = Duration::from_secs(1); // 1 second
-
-const HELLO_DIR_ATTR: FileAttr = FileAttr {
-    ino: 1,
-    size: 0,
-    blocks: 0,
-    atime: UNIX_EPOCH, // 1970-01-01 00:00:00
-    mtime: UNIX_EPOCH,
-    ctime: UNIX_EPOCH,
-    crtime: UNIX_EPOCH,
-    kind: FileType::Directory,
-    perm: 0o755,
-    nlink: 2,
-    uid: 501,
-    gid: 20,
-    rdev: 0,
-    flags: 0,
-    blksize: 512,
-};
+use crate::direntry::{EntryType, DirEntry, ROOT_DIR_ATTR, DEFAULT_TTL,
+                      entry_type_ext};
 
 pub struct RMXFS {
     source_dir: PathBuf,
@@ -47,144 +29,6 @@ impl RMXFS {
             dir_map: HashMap::new(),
             file_map: HashMap::new(),
         }
-    }
-}
-
-#[derive(Eq, Hash, Debug, Copy, Clone, PartialEq)]
-enum EntryType {
-    PDF,
-    EPUB,
-    RMLINES,
-    NONE,
-}
-
-const ENTRYMAP: &'static [(EntryType, &'static str)] = &[
-    (EntryType::EPUB, "epub"),
-    (EntryType::PDF, "pdf"),
-    (EntryType::RMLINES, "rm"),
-];
-
-fn entry_type_ext(e: &EntryType) -> &str {
-    ENTRYMAP
-        .iter()
-        .find(|x| x.0 == *e)
-        .unwrap_or(&(EntryType::NONE, ""))
-        .1
-}
-
-fn determine_entry_type(path: &Path) -> (EntryType, u64) {
-    let mut p = PathBuf::from(path);
-    for (tp, ext) in ENTRYMAP {
-        p.set_extension(ext);
-        if p.exists() {
-            let size = fs::File::open(p).unwrap().metadata().unwrap().len();
-            return (*tp, size);
-        }
-    }
-    return (EntryType::NONE, 0);
-}
-
-#[derive(Debug)]
-struct DirEntry {
-    root_path: PathBuf,
-    prefix: OsString,
-    entry_type: EntryType,
-    name: OsString,
-    parent: OsString,
-    attr: FileAttr,
-
-    json_metadata: JsonMetadata,
-}
-
-impl DirEntry {
-    fn new(
-        file_path: &Path,
-        attr: &FileAttr,
-        json_data: &JsonMetadata,
-    ) -> DirEntry {
-        let (tp, sz) = determine_entry_type(file_path);
-        DirEntry {
-            root_path: PathBuf::from(
-                file_path.parent().unwrap_or(Path::new("")),
-            ),
-            prefix: file_path.file_stem().unwrap().to_os_string(),
-            entry_type: tp,
-            name: OsString::from(&json_data.visible_name),
-            parent: OsString::from(&json_data.parent),
-            attr: FileAttr {
-                size: sz,
-                kind: if tp == EntryType::NONE {
-                    FileType::Directory
-                } else {
-                    FileType::RegularFile
-                },
-                perm: HELLO_DIR_ATTR.perm,
-                ..*attr
-            },
-            json_metadata: json_data.clone(),
-        }
-    }
-
-    fn make_root(dir_path: &Path) -> DirEntry {
-        // TODO: make pathlike
-        DirEntry {
-            root_path: PathBuf::from(dir_path),
-            prefix: OsString::from(""),
-            entry_type: EntryType::NONE,
-            name: OsString::from(""),
-            parent: OsString::from(""),
-            attr: HELLO_DIR_ATTR,
-
-            json_metadata: JsonMetadata::new("", ""),
-        }
-    }
-
-    fn source_file_name(&self) -> OsString {
-        let mut path = PathBuf::from(&self.prefix);
-        path.set_extension(entry_type_ext(&self.entry_type));
-        path.into_os_string()
-    }
-
-    fn file_name(&self) -> OsString {
-        let mut path = PathBuf::from(&self.name);
-        path.set_extension(entry_type_ext(&self.entry_type));
-        path.into_os_string()
-    }
-
-    fn metadata_file_name(&self) -> PathBuf {
-        let mut path = PathBuf::from(&self.root_path);
-        path.push(&self.prefix);
-        path.set_extension("metadata");
-        path
-    }
-
-    fn is_parent(&self, parent: &DirEntry) -> bool {
-        (parent.name == "." && self.parent == "")
-            || self.parent == parent.prefix
-    }
-
-    fn parent_inode(&self) -> io::Result<u64> {
-        let mut path = PathBuf::from(&self.root_path);
-        path.push(&self.parent);
-        path.set_extension("metadata");
-        Ok(fs::File::open(path)?.metadata()?.ino())
-    }
-
-    fn rename(&self, newparent: &DirEntry, newname: &OsStr) -> io::Result<DirEntry> {
-        let mut json_data = self.json_metadata.clone();
-        json_data.visible_name = newname.to_string_lossy().to_string();
-        json_data.parent = newparent.prefix.to_string_lossy().to_string();
-        json_data.save_file(self.metadata_file_name())?;
-        let res = DirEntry {
-            name: OsString::from(newname),
-            parent: newparent.prefix.clone(),
-            json_metadata: json_data,
-            root_path: self.root_path.clone(),
-            prefix: self.prefix.clone(),
-            ..*self
-        };
-
-        Ok(res)
     }
 }
 
@@ -271,7 +115,7 @@ impl Filesystem for RMXFS {
                              parent == e.parent_inode().unwrap_or(1)) {
             Some(entry) => {
                 &entry;
-                reply.entry(&TTL, &entry.attr, 0)
+                reply.entry(&DEFAULT_TTL, &entry.attr, 0)
             }
             None => {
                 debug!("lookup: not found {}", name.to_str().unwrap());
@@ -282,15 +126,73 @@ impl Filesystem for RMXFS {
 
     fn getattr(&mut self, _req: &Request, ino: u64, reply: ReplyAttr) {
         if ino == 1 {
-            reply.attr(&TTL, &HELLO_DIR_ATTR)
+            reply.attr(&DEFAULT_TTL, &ROOT_DIR_ATTR)
         } else {
             match self.find_file(&|e: &DirEntry| ino == e.attr.ino) {
-                Some(entry) => reply.attr(&TTL, &entry.attr),
+                Some(entry) => reply.attr(&DEFAULT_TTL, &entry.attr),
                 None => {
                     debug!("getattr not found {}", ino);
                     reply.error(ENOENT)
                 }
             }
+        }
+    }
+
+    fn mkdir(&mut self,
+             _req: &Request,
+             parent: u64,
+             name: &OsStr,
+             mode: u32,
+             umask: u32,
+             reply: ReplyEntry) {
+        debug!("mkdir: {}/{}", parent, name.to_str().unwrap());
+        if let Some(parent_dir) = self.dir_from_ino(parent) {
+            match DirEntry::make_dir(&parent_dir, name, mode, umask) {
+                Ok(dir) => reply.entry(&DEFAULT_TTL, &dir.attr, 0),
+                Err(e) => {
+                    debug!("mkdir: {}", e);
+                    reply.error(libc::EIO);
+                }
+            }
+        } else {
+            debug!("mkdir: parent not found {}", parent);
+            reply.error(ENOENT);
+        }
+    }
+
+    fn rmdir(&mut self,
+             _req: &Request,
+             parent: u64,
+             name: &OsStr,
+             reply: ReplyEmpty) {
+        debug!("rmdir: {}/{}", parent, name.to_str().unwrap());
+        if let Some(parent_dir) = self.dir_from_ino(parent) {
+            if let Some(dir) = self.find_file(&|e: &DirEntry|
+                                              e.parent == parent_dir.prefix &&
+                                              name == e.name) {
+                // Removing the directory is ok, since open dirs hang around
+                // in the dir_map
+                /* if self.dir_map.contains_key(&dir.attr.ino) {
+                    reply.error(libc::EBUSY);
+                } else */
+                if self.find_file(&|e: &DirEntry| e.parent == dir.prefix).is_some() {
+                    reply.error(libc::ENOTEMPTY);
+                } else {
+                    match fs::remove_file(dir.metadata_file_name()) {
+                        Ok(_) => reply.ok(),
+                        Err(e) => {
+                            debug!("rmdir: couldn't remove metadata: {}", e);
+                            reply.error(libc::EIO);
+                        }
+                    }
+                }
+            } else {
+                debug!("mkdir: dir not found {}", name.to_str().unwrap());
+                reply.error(ENOENT);
+            }
+        } else {
+            debug!("mkdir: parent not found: {}", parent);
+            reply.error(ENOENT);
         }
     }
 

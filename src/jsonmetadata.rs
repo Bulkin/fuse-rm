@@ -7,22 +7,40 @@ use std::path::Path;
 type JsonMap = HashMap<String, serde_json::Value>;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+enum DocType {
+    CollectionType,
+    DocumentType,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct JsonMetadata {
     pub parent: String,
     pub visible_name: String,
+    r#type: DocType,
 
     #[serde(flatten)]
     extra: JsonMap,
 }
 
 impl JsonMetadata {
-    pub fn new(visible_name: &str, parent: &str) -> JsonMetadata {
+    fn new(visible_name: &str,
+           parent: &str,
+           doctype: DocType) -> JsonMetadata {
         JsonMetadata {
             parent: parent.to_string(),
             visible_name: visible_name.to_string(),
+            r#type: doctype,
             extra: JsonMap::new(),
         }
+    }
+
+    pub fn new_file(visible_name: &str, parent: &str) -> JsonMetadata {
+        JsonMetadata::new(visible_name, parent, DocType::DocumentType)
+    }
+
+    pub fn new_dir(visible_name: &str, parent: &str) -> JsonMetadata {
+        JsonMetadata::new(visible_name, parent, DocType::CollectionType)
     }
 
     pub fn from_file<P: AsRef<Path>>(path: P) -> io::Result<JsonMetadata>{

@@ -19,8 +19,10 @@ class Test(unittest.TestCase):
         cls._fuserm_output = []
         while True:
             line = cls._fuserm.stdout.readline()
-            if line.startswith(b'Waiting for Ctrl-C') or line == b'':
+            if line.startswith(b'Waiting for Ctrl-C'):
                 break
+            elif cls._fuserm.poll is not None:
+                raise RuntimeError('fuse-rm failed to start')
             else:
                 print(line)
         cls._fuserm_thread = Thread(target=cls.capture_fuserm_output)
@@ -57,3 +59,13 @@ class Test(unittest.TestCase):
         self.assertFalse(test_file.exists())
         new_file.rename(test_file)
         self.assertEqual(test_file_sz, test_file.stat().st_size)
+
+    def test_mkdir(self):
+        test_dir = Path('test_dir')
+        test_dir.mkdir()
+        self.assertTrue(test_dir.exists())
+        test_dir_2 = test_dir / 't1'
+        test_dir_2.mkdir()
+        self.assertRaisesRegex(OSError, 'not empty', test_dir.rmdir)
+        test_dir_2.rmdir()
+        test_dir.rmdir()

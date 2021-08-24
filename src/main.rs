@@ -7,6 +7,7 @@ use std::sync::{Arc, Condvar, Mutex};
 mod rmxfs;
 use rmxfs::RMXFS;
 
+mod direntry;
 mod jsonmetadata;
 
 #[derive(Debug)]
