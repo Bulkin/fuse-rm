@@ -1,6 +1,9 @@
 #[macro_use]
 extern crate log;
 
+#[macro_use]
+extern crate serde_json;
+
 use std::io;
 use std::sync::{Arc, Condvar, Mutex};
 

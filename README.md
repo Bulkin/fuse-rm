@@ -16,14 +16,19 @@ To mount a xochitl directory (filled with *.metadata, *.pdf, etc.):
 
 ### Implemented:
 
-* folder structure
-* epubs and pdfs
+* manipulating folder structure
+* adding and removing epubs and pdfs
 
+### Known issues
+
+* removal does not remove all files and directories related to the entry
 
 ### TODO:
 
-* adding epubs and pdfs, creating folders
-* moving/removing files and folders
+* trash
+  - remarkable has two levels of deletion before really unlinking the file:
+    moving to to an implied "trash" directory, and then setting the "deleted"
+    flag in metadata.
 * access to annotations and notes (rendering lines-files needed)
 
 ## Building and Installation

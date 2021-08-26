@@ -1,9 +1,7 @@
-use fuser::{
-    FileAttr, FileType,
-};
-use std::io;
-use std::fs;
+use fuser::{FileAttr, FileType};
 use std::ffi::{OsStr, OsString};
+use std::fs;
+use std::io;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, UNIX_EPOCH};
@@ -15,9 +13,9 @@ pub enum EntryType {
     PDF,
     EPUB,
     RMLINES,
+    PENDING,
     NONE,
 }
-
 
 #[derive(Debug)]
 pub struct DirEntry {
@@ -43,6 +41,14 @@ pub fn entry_type_ext(e: &EntryType) -> &str {
         .find(|x| x.0 == *e)
         .unwrap_or(&(EntryType::NONE, ""))
         .1
+}
+
+pub fn ext_entry_type(ext: &str) -> &EntryType {
+    &ENTRYMAP
+        .iter()
+        .find(|x| x.1 == ext)
+        .unwrap_or(&(EntryType::NONE, ""))
+        .0
 }
 
 fn determine_entry_type(path: &Path) -> (EntryType, u64) {
@@ -76,7 +82,6 @@ pub const ROOT_DIR_ATTR: FileAttr = FileAttr {
     flags: 0,
     blksize: 512,
 };
-
 
 impl DirEntry {
     pub fn new(
@@ -121,34 +126,124 @@ impl DirEntry {
         }
     }
 
-    pub fn make_dir(parent_dir: &DirEntry,
-                    name: &OsStr,
-                    mode: u32,
-                    umask: u32) -> io::Result<DirEntry> {
+    pub fn create_entry(
+        parent_dir: &DirEntry,
+        name: &OsStr,
+        mode: u32,
+        umask: u32,
+        is_dir: bool,
+    ) -> io::Result<DirEntry> {
         let uid = uuid::Uuid::new_v4();
-        let mut dir = DirEntry {
+        let mut entry = DirEntry {
             root_path: PathBuf::from(&parent_dir.root_path),
             prefix: OsString::from(uid.to_hyphenated().to_string()),
-            entry_type: EntryType::NONE,
+            entry_type: if is_dir {
+                EntryType::NONE
+            } else {
+                EntryType::PENDING
+            },
             name: OsString::from(name),
             parent: OsString::from(&parent_dir.prefix),
             attr: FileAttr {
                 ino: 0, // need to replace with real ino after writing metadata
                 perm: (mode & !umask) as u16,
+                kind: if is_dir {
+                    FileType::Directory
+                } else {
+                    FileType::RegularFile
+                },
                 ..*&ROOT_DIR_ATTR
             },
-            json_metadata: JsonMetadata::new_dir(name.to_str().unwrap(),
-                                                 parent_dir.prefix.to_str().unwrap())
+            json_metadata: if is_dir {
+                JsonMetadata::new_dir(
+                    name.to_str().unwrap(),
+                    parent_dir.prefix.to_str().unwrap(),
+                )
+            } else {
+                JsonMetadata::new_file(
+                    name.to_str().unwrap(),
+                    parent_dir.prefix.to_str().unwrap(),
+                )
+            },
         };
-        dir.json_metadata.save_file(dir.metadata_file_name())?;
-        dir.attr.ino = fs::File::open(dir.metadata_file_name())?.metadata()?.ino();
-        Ok(dir)
+        let ino = if is_dir {
+            entry.json_metadata.save_file(entry.metadata_file_name())?
+        } else {
+            // We rely on the inode not changing on mv
+            let mut temp_file = PathBuf::from(&entry.root_path);
+            temp_file.push(".pending");
+            if !temp_file.exists() {
+                fs::create_dir(&temp_file)?;
+            }
+            temp_file.push(&entry.prefix);
+            temp_file.set_extension("metadata");
+            entry.json_metadata.save_file(temp_file)?
+        };
+        entry.attr.ino = ino;
+        Ok(entry)
     }
 
-    fn source_file_name(&self) -> OsString {
-        let mut path = PathBuf::from(&self.prefix);
+    pub fn make_dir(
+        parent_dir: &DirEntry,
+        name: &OsStr,
+        mode: u32,
+        umask: u32,
+    ) -> io::Result<DirEntry> {
+        DirEntry::create_entry(parent_dir, name, mode, umask, true)
+    }
+
+    pub fn make_file(
+        parent_dir: &DirEntry,
+        name: &OsStr,
+        mode: u32,
+        umask: u32,
+    ) -> io::Result<DirEntry> {
+        DirEntry::create_entry(parent_dir, name, mode, umask, false)
+    }
+
+    pub fn forget_pending(&self) {
+        let data_file_path = self.source_file_path();
+        if data_file_path.exists() {
+            fs::remove_file(data_file_path).unwrap();
+        }
+        let metadata_path = self.metadata_file_name();
+        if metadata_path.exists() {
+            fs::remove_file(metadata_path).unwrap();
+        }
+    }
+
+    pub fn finalize_pending(&self) -> io::Result<()> {
+        if self.entry_type == EntryType::NONE
+            || self.entry_type == EntryType::PENDING
+        {
+            return Err(io::Error::from_raw_os_error(libc::EPERM));
+        }
+        let mut source_path = PathBuf::from(&self.root_path);
+        source_path.push(".pending");
+        source_path.push(&self.prefix);
+        fs::rename(&source_path, self.source_file_path())?;
+        source_path.set_extension("metadata");
+        fs::rename(&source_path, self.metadata_file_name())?;
+
+        // The file type is stored in "*.content" (worked without it before)
+        let mut content_path = self.metadata_file_name();
+        content_path.set_extension("content");
+        let content_data = json!({
+            "fileType": entry_type_ext(&self.entry_type)
+        });
+        fs::write(content_path, serde_json::to_vec(&content_data)?)?;
+
+        Ok(())
+    }
+
+    pub fn source_file_path(&self) -> PathBuf {
+        let mut path = PathBuf::from(&self.root_path);
+        if self.entry_type == EntryType::PENDING {
+            path.push(".pending");
+        }
+        path.push(&self.prefix);
         path.set_extension(entry_type_ext(&self.entry_type));
-        path.into_os_string()
+        path
     }
 
     pub fn file_name(&self) -> OsString {
@@ -159,6 +254,9 @@ impl DirEntry {
 
     pub fn metadata_file_name(&self) -> PathBuf {
         let mut path = PathBuf::from(&self.root_path);
+        if self.entry_type == EntryType::PENDING {
+            path.push(".pending");
+        }
         path.push(&self.prefix);
         path.set_extension("metadata");
         path
@@ -176,7 +274,11 @@ impl DirEntry {
         Ok(fs::File::open(path)?.metadata()?.ino())
     }
 
-    pub fn rename(&self, newparent: &DirEntry, newname: &OsStr) -> io::Result<DirEntry> {
+    pub fn rename(
+        &self,
+        newparent: &DirEntry,
+        newname: &OsStr,
+    ) -> io::Result<DirEntry> {
         let mut json_data = self.json_metadata.clone();
         json_data.visible_name = newname.to_string_lossy().to_string();
         json_data.parent = newparent.prefix.to_string_lossy().to_string();
@@ -192,5 +294,17 @@ impl DirEntry {
 
         Ok(res)
     }
-}
 
+    pub fn update_type(&mut self, buf: &[u8]) -> Result<(), &str> {
+        match infer::get(buf) {
+            Some(tp) => {
+                if ext_entry_type(tp.extension()) != &EntryType::NONE {
+                    Ok(self.entry_type = *ext_entry_type(tp.extension()))
+                } else {
+                    Err(tp.extension())
+                }
+            }
+            None => Err("unknown"),
+        }
+    }
+}

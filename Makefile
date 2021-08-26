@@ -19,3 +19,8 @@ ln -sf /home/root/.local/share/remarkable/xochitl/ /home/root/rmlibrary"
 	scp $? root@remarkable:/opt/bin/
 	scp fuse-rm.service root@remarkable:/lib/systemd/system
 	ssh root@remarkable systemctl restart fuse-rm
+
+upload-bin: target/armv7-unknown-linux-gnueabihf/release/fuse-rm
+	ssh root@remarkable systemctl stop fuse-rm
+	scp $? root@remarkable:/opt/bin/
+	ssh root@remarkable systemctl restart fuse-rm

@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+
+pkgnames=(fuse-rm)
+pkgdesc="FUSE FS for accessing xochitl library"
+url=https://github.com/Bulkin/fuse-rm
+pkgver=0.0.3
+timestamp=2021-08-25T21:35Z
+section="utils"
+maintainer="Vasili Bulkin"
+license=MIT
+image=rust:v1.2.1
+
+build() {
+    make arm
+}
+
+package() {
+    install -D -m 755 -t "$pkgdir"/opt/bin "$srcdir"/target/armv7-unknown-linux-gnueabihf/release/fuse-rm
+    install -D -m 755 -t "$pkgdir"/lib/systemd/system "$srcdir"/fuse-rm.service
+}
+
+configure() {
+    cat <<EOF
+fuse-rm is a FUSE FS for accessing the xochitl document library.
+For testing, fuse-rm can be launched directly.
+A systemd service is supplied for convenience. To use it,
+first symlink or copy the xochitl directory to /home/root/rmlibrary
+and mkdir /home/root/library.
+
+WARNING: when using fuse-rm on a live xochitl library, make regular backups.
+EOF
+    systemctl daemon-reload
+}
+
+preremove() {
+    if is-active fuse-rm; then
+        echo "Stopping fuse-rm"
+        systemctl stop fuse-rm
+    fi
+}
+
+postremove() {
+    systemctl daemon-reload
+}

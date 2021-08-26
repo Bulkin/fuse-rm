@@ -41,15 +41,18 @@ class Test(unittest.TestCase):
     def tearDownClass(cls):
         cls._fuserm.terminate()
 
-    def test_file_structure(self):
+    def test_file_structure_root(self):
         root = set(check_output('stat -c "%s %n" *', shell=True).decode().split('\n'))
-        dir = set(check_output(['stat -c "%s %n" dolor/*'], shell=True).decode().split('\n'))
-        self.assertSetEqual(root, { '', '0 dolor',
-                                 '126501 ipsum.pdf',
-                                 '4091 lorem.epub' })
-        self.assertSetEqual(dir, { '', '30875 dolor/ipsum.epub',
-                                '28859 dolor/lorem.pdf' })
+        self.assertSetEqual(root, { '',
+                                    '0 dolor',
+                                    '126501 ipsum.pdf',
+                                    '4091 lorem.epub' })
 
+    def test_file_structure_subdir(self):
+        dir = set(check_output(['stat -c "%s %n" dolor/*'], shell=True).decode().split('\n'))
+        self.assertSetEqual(dir, { '',
+                                   '30875 dolor/ipsum.epub',
+                                   '28859 dolor/lorem.pdf' })
 
     def test_rename(self):
         test_file = Path('ipsum.pdf')
@@ -69,3 +72,46 @@ class Test(unittest.TestCase):
         self.assertRaisesRegex(OSError, 'not empty', test_dir.rmdir)
         test_dir_2.rmdir()
         test_dir.rmdir()
+
+    def test_add_epub(self):
+        test_file = Path('ipsum.epub')
+        self.assertFalse(test_file.exists())
+        shutil.copyfile(Path('..') / test_file, test_file)
+
+        self.test_file_structure_subdir()
+        self.assertTrue(test_file.exists())
+
+        test_file.unlink()
+        self.assertFalse(test_file.exists())
+
+    def test_add_pdf_subdir(self):
+        test_file = Path('dolor/ipsum.pdf')
+        src_file = Path('..') / test_file.name
+        self.assertFalse(test_file.exists())
+        shutil.copyfile(src_file, test_file)
+
+        self.test_file_structure_root()
+        self.assertEqual(test_file.stat().st_size, src_file.stat().st_size)
+
+        test_file.unlink()
+        self.assertFalse(test_file.exists())
+
+    def test_add_unsupported(self):
+        test_file = Path('../lorem.txt')
+        self.assertRaisesRegex(OSError, 'not implemented',
+                               lambda: shutil.copyfile(test_file, test_file.name))
+
+    def test_rm_recursive(self):
+        test_dir = Path('test-dir/deeper/')
+        test_dir.mkdir(parents=True, exist_ok=True)
+        self.assertTrue(test_dir.exists())
+        shutil.copyfile('../lorem.epub', test_dir / 'a')
+        shutil.copyfile('../lorem.pdf', test_dir / 'b')
+        shutil.rmtree(test_dir.parent)
+        self.assertFalse(test_dir.exists())
+
+    def test_dir_with_dot(self):
+        # make KOReader's side cars go away
+        test_dir = Path('test-dir.sdr')
+        self.assertRaisesRegex(OSError, 'not implemented',
+                               test_dir.mkdir)
