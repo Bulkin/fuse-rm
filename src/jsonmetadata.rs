@@ -51,7 +51,7 @@ impl JsonMetadata {
             DocType::DocumentType,
             vec![
                 ("deleted".to_string(), json!(false)),
-                ("lastModified".to_string(), json!(modtime)),
+                ("lastModified".to_string(), json!(modtime.to_string())),
                 ("metadatamodified".to_string(), json!(false)),
                 ("modified".to_string(), json!(false)),
                 ("pinned".to_string(), json!(false)),

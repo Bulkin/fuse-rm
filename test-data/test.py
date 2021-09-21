@@ -1,8 +1,11 @@
 import unittest
 
+import glob
+import json
 import os
 import shutil
 import time
+from datetime import datetime
 from threading import Thread
 from subprocess import Popen, PIPE, check_output
 from pathlib import Path
@@ -45,6 +48,7 @@ class Test(unittest.TestCase):
         root = set(check_output('stat -c "%s %n" *', shell=True).decode().split('\n'))
         self.assertSetEqual(root, { '',
                                     '0 dolor',
+                                    '0 trash',
                                     '126501 ipsum.pdf',
                                     '4091 lorem.epub' })
 
@@ -115,3 +119,26 @@ class Test(unittest.TestCase):
         test_dir = Path('test-dir.sdr')
         self.assertRaisesRegex(OSError, 'not implemented',
                                test_dir.mkdir)
+
+    # TODO: file moved to trash -> file exists error
+    def test_last_modified(self):
+        curtime = datetime.now()
+
+        test_file = Path('ipsum.epub')
+        self.assertFalse(test_file.exists())
+        shutil.copyfile(Path('..') / test_file, test_file)
+
+        newest = max(glob.iglob(str(SRC_DIR) + '/*.metadata'),
+                     key=os.path.getctime)
+        print(newest)
+
+        with open(newest) as f:
+            metadata = json.load(f)
+
+        self.assertTrue(isinstance(metadata['lastModified'], str))
+        modtime = datetime.fromtimestamp(int(metadata['lastModified']) // 1000)
+
+        self.assertTrue((modtime - curtime).total_seconds() < 1)
+
+        test_file.unlink()
+        self.assertFalse(test_file.exists())
