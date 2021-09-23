@@ -142,3 +142,8 @@ class Test(unittest.TestCase):
 
         test_file.unlink()
         self.assertFalse(test_file.exists())
+
+    def test_trash(self):
+        dir = set(check_output(['stat -c "%s %n" trash/*'], shell=True).decode().split('\n'))
+        self.assertSetEqual(dir, { '',
+                                   '28859 trash/lorem-trashed.pdf' })

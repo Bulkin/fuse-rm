@@ -126,6 +126,22 @@ impl DirEntry {
         }
     }
 
+    pub fn make_trash(dir_path: &Path) -> DirEntry {
+        DirEntry {
+            root_path: PathBuf::from(dir_path),
+            prefix: OsString::from("trash"),
+            entry_type: EntryType::NONE,
+            name: OsString::from("trash"),
+            parent: OsString::from(""),
+            attr: FileAttr {
+                ino: 2,
+                ..*&ROOT_DIR_ATTR
+            },
+
+            json_metadata: JsonMetadata::new_file("trash", ""),
+        }
+    }
+
     pub fn create_entry(
         parent_dir: &DirEntry,
         name: &OsStr,
@@ -268,6 +284,9 @@ impl DirEntry {
     }
 
     pub fn parent_inode(&self) -> io::Result<u64> {
+        if self.parent == "trash" {
+            return Ok(2);
+        }
         let mut path = PathBuf::from(&self.root_path);
         path.push(&self.parent);
         path.set_extension("metadata");

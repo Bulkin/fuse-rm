@@ -75,6 +75,10 @@ fn conv_attr(attr: &fs::DirEntry) -> io::Result<FileAttr> {
 
 fn list_dir_metadata(dir: &PathBuf) -> io::Result<Vec<DirEntry>> {
     let mut res = Vec::new();
+
+    // Special dirs (currently trash:2):
+    res.push(DirEntry::make_trash(dir));
+
     for entry in fs::read_dir(dir)? {
         let e = entry?;
         if !e.file_name().to_str().unwrap_or("").ends_with(".metadata") {
@@ -136,16 +140,11 @@ impl Filesystem for RMXFS {
             reply.attr(&DEFAULT_TTL, &entry.attr);
             return;
         }
-        if ino == 1 {
-            reply.attr(&DEFAULT_TTL, &ROOT_DIR_ATTR)
+        if let Some(entry) = self.dir_from_ino(ino) {
+            reply.attr(&DEFAULT_TTL, &entry.attr);
         } else {
-            match self.find_file(&|e: &DirEntry| ino == e.attr.ino) {
-                Some(entry) => reply.attr(&DEFAULT_TTL, &entry.attr),
-                None => {
-                    debug!("getattr not found {}", ino);
-                    reply.error(ENOENT)
-                }
-            }
+            debug!("getattr not found {}", ino);
+            reply.error(ENOENT)
         }
     }
 

@@ -3,8 +3,8 @@
 pkgnames=(fuse-rm)
 pkgdesc="FUSE FS for accessing xochitl library"
 url=https://github.com/Bulkin/fuse-rm
-pkgver=0.0.3
-timestamp=2021-08-25T21:35Z
+pkgver=0.0.4
+timestamp=2021-09-23T19:20Z
 section="utils"
 maintainer="Vasili Bulkin"
 license=MIT
