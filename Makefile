@@ -6,7 +6,7 @@ arm:
 
 toltec:
 	mkdir -p deps
-	podman run --name remarkable-build -v deps:/root/.cargo/registry -v .:/project --rm -it  ghcr.io/toltec-dev/rust:v2.1 make -C /project toltec-internal
+	podman run --name remarkable-build -v deps:/root/.cargo/registry -v .:/project --rm -it  ghcr.io/toltec-dev/rust:v2.3 make -C /project toltec-internal
 
 toltec-internal:
 	cargo build --release --target=armv7-unknown-linux-gnueabihf # || bash
